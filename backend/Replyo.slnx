@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Replyo.Api/Replyo.Api.csproj" />
+    <Project Path="src/Replyo.Application/Replyo.Application.csproj" />
+    <Project Path="src/Replyo.Domain/Replyo.Domain.csproj" />
+    <Project Path="src/Replyo.Infrastructure/Replyo.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Replyo.Api.Tests/Replyo.Api.Tests.csproj" />
+    <Project Path="tests/Replyo.Application.Tests/Replyo.Application.Tests.csproj" />
+  </Folder>
+</Solution>
