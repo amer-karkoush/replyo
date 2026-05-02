@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: replyo-postgres
+    environment:
+      POSTGRES_USER: replyo
+      POSTGRES_PASSWORD: replyo_dev_password
+      POSTGRES_DB: replyo
+    ports:
+      - "5432:5432"
+    volumes:
+      - replyo_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U replyo -d replyo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: replyo-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - replyo_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  replyo_postgres_data:
+  replyo_redis_data:
