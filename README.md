@@ -27,7 +27,49 @@ See `docs/architecture.md` for system design and key decisions.
 
 ## Getting started
 
-(Local setup instructions will be added once scaffolding is complete.)
+### Prerequisites
+
+- .NET 10 SDK
+- Node.js 20+
+- Docker Desktop
+- An OpenAI API key (only needed for AI features in Week 2+)
+
+### Local setup
+
+**1. Clone the repository**
+
+**2. Start the database services**
+
+```bash
+docker compose up -d
+```
+
+**3. Set up backend configuration**
+
+```bash
+cd backend/src/Replyo.Api
+cp appsettings.Development.json.example appsettings.Development.json
+```
+
+Then open `appsettings.Development.json` and fill in your OpenAI API key.
+
+**4. Run the backend**
+
+```bash
+dotnet run
+```
+
+The API will start at `http://localhost:5046`.
+
+**5. Run the frontend (in a separate terminal)**
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+The dashboard will be available at `http://localhost:5173`.
 
 ## License
 
