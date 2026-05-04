@@ -1,4 +1,5 @@
 using Replyo.Domain.Common;
+using Replyo.Domain.Enums;
 
 namespace Replyo.Domain.Entities;
 
@@ -10,12 +11,19 @@ public class User : EntityBase
     public string Email { get; private set; } = string.Empty;
     public string PasswordHash { get; private set; } = string.Empty;
     public string FullName { get; private set; } = string.Empty;
+    public UserRole Role { get; private set; }
     public bool IsActive { get; private set; } = true;
     public DateTimeOffset? LastLoginAt { get; private set; }
 
     private User() { }
 
-    public static User Create(Guid tenantId, string email, string passwordHash, string fullName)
+    public static User CreateOwner(Guid tenantId, string email, string passwordHash, string fullName)
+        => Create(tenantId, email, passwordHash, fullName, UserRole.Owner);
+
+    public static User CreateMember(Guid tenantId, string email, string passwordHash, string fullName)
+        => Create(tenantId, email, passwordHash, fullName, UserRole.Member);
+
+    private static User Create(Guid tenantId, string email, string passwordHash, string fullName, UserRole role)
     {
         if (tenantId == Guid.Empty)
             throw new ArgumentException("Tenant ID is required.", nameof(tenantId));
@@ -34,7 +42,8 @@ public class User : EntityBase
             TenantId = tenantId,
             Email = email.Trim().ToLowerInvariant(),
             PasswordHash = passwordHash,
-            FullName = fullName.Trim()
+            FullName = fullName.Trim(),
+            Role = role
         };
     }
 
