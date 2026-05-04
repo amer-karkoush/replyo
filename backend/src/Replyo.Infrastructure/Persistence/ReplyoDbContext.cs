@@ -24,6 +24,8 @@ public class ReplyoDbContext : DbContext
     public DbSet<WidgetVisitor> WidgetVisitors => Set<WidgetVisitor>();
     public DbSet<Conversation> Conversations => Set<Conversation>();
     public DbSet<Message> Messages => Set<Message>();
+    public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
+
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
