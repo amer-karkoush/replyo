@@ -72,17 +72,48 @@ A daily log of what got built, what got stuck, and what's next.
 - Verified all 8 tables (7 entity tables + `__EFMigrationsHistory`) exist
 - Confirmed pgvector 0.8.2 is loaded and embedding column is `vector(1536)`
 
+*Health checks*
+- Added `AspNetCore.HealthChecks.NpgSql` and `AspNetCore.HealthChecks.Redis` to the API project
+- Added Redis connection string to `appsettings.Development.json` and the committed `.example` template
+- Wired up tagged health checks in `Program.cs` — postgres and redis both tagged `ready`
+- Mapped two endpoints: `/health/live` (no checks, pure liveness) and `/health/ready` (runs all `ready`-tagged checks)
+- Custom JSON response writer exposes per-check status, duration, description, and error message
+- Verified both endpoints respond correctly: liveness returns 200 with checks empty, readiness returns 200 with both checks Healthy when Docker is up, 503 when dependencies are down
+
+*OpenAPI / Scalar*
+- Removed `Swashbuckle.AspNetCore` (was scaffolded by template, never used in code)
+- Added `Scalar.AspNetCore` for the API explorer UI
+- Gated both `MapOpenApi` and `MapScalarApiReference` to the Development environment to avoid leaking API surface in production
+- Configured Scalar with C# / `HttpClient` as the default code sample target
+- Verified `/openapi/v1.json` serves a valid document and `/scalar/v1` renders the UI
+
+*Tests*
+- Confirmed test projects already had everything needed: xUnit 2.9.3, FluentAssertions 6.12.2, `Microsoft.AspNetCore.Mvc.Testing` 10.0.7
+- Deleted leftover `UnitTest1.cs` scaffolding from `Replyo.Application.Tests`
+- Added `TenantTests.Create_WithValidInputs_SetsExpectedFields` — first domain unit test, proves the unit harness works
+- Added `HealthEndpointTests.GetLiveness_ReturnsHealthy` — first integration test using `WebApplicationFactory<Program>`, proves the integration harness works
+- Added `public partial class Program;` to `Program.cs` so the test project can reference the entry point as a generic argument
+- Full suite green: 2 tests, 2 passing
+
+
 **Stuck / resolved:**
 - EF Core version conflict between 10.0.4 (transitive via Pgvector.EntityFrameworkCore) and 10.0.7 (direct references); resolved by pinning `Microsoft.EntityFrameworkCore.Relational` and other EF packages explicitly to 10.0.7 across all projects
 - README markdown rendering issues with code blocks inside numbered lists; rewrote section using bold headings + standalone code fences
+- `dotnet run` threw `ReflectionTypeLoadException` after adding health check packages because Swashbuckle 7.3.2 was compiled against Microsoft.OpenApi 1.x but .NET 10's built-in OpenAPI stack pulls in 2.x. Resolved by removing Swashbuckle entirely rather than upgrading — it was scaffolding cruft, never used in code, and Microsoft now explicitly recommends against pairing Swashbuckle with `WithOpenApi()` / `MapOpenApi()`
+- Initial readiness check returned 503 because Docker Desktop wasn't running. Confirmed the readiness endpoint is doing real work, not just rubber-stamping. Started Docker, both checks went green
+
 
 **Decisions:**
 - Skipped pgvector index (HNSW/IVFFlat) for now — best added in a separate migration in Week 2 once we have real data and can tune it properly
 - Left embedding value comparer warning for later — not blocking since chunks are immutable in our design
+- Liveness / readiness split instead of a single `/health` — production-correct, signals to orchestrators that "process alive" and "ready to serve traffic" are different concerns
+- Scalar over Swashbuckle 10 — Scalar is the modern recommendation and reads the OpenAPI document produced by the built-in `MapOpenApi()`, keeping us aligned with the .NET 10 way
+- Kept FluentAssertions on `6.*` deliberately — version 7+ moved to a paid commercial license; staying on 6 keeps the option open to migrate to AwesomeAssertions or Shouldly if FA's commercial terms ever bite
+- Skipped Testcontainers for now — the integration test only hits liveness, which has no dependencies. Real DB-touching tests in Week 2 will require either Testcontainers or a dedicated test DB; deferring that decision until we have a concrete repository to test
+- Domain test landed in `Replyo.Application.Tests` rather than a separate `Replyo.Domain.Tests` project — overkill for one test, can split later if domain test count grows
 
-**Next (Day 3):**
-- Phase 6: Real `/health` endpoint that verifies DB and Redis connectivity
-- Phase 7: Add Swashbuckle for Swagger UI
-- Phase 8: First test (proves test infrastructure works)
-- Phase 9: Make all Day 2 commits
-- Begin auth scaffolding (JWT, password hashing)
+**Next (Day 4):**
+- Begin auth scaffolding: JWT bearer authentication, password hashing (BCrypt or ASP.NET Core Identity's PasswordHasher)
+- Real `HttpContextCurrentTenant` implementation that reads tenant ID from JWT claims, replacing the temporary `NoTenantCurrentTenant`
+- Auth endpoints: register, login, refresh
+- Decide whether to use ASP.NET Core Identity wholesale or roll a leaner custom auth (Identity is heavier than we need for a multi-tenant API; worth a deliberate decision)
