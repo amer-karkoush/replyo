@@ -112,8 +112,22 @@ A daily log of what got built, what got stuck, and what's next.
 - Skipped Testcontainers for now — the integration test only hits liveness, which has no dependencies. Real DB-touching tests in Week 2 will require either Testcontainers or a dedicated test DB; deferring that decision until we have a concrete repository to test
 - Domain test landed in `Replyo.Application.Tests` rather than a separate `Replyo.Domain.Tests` project — overkill for one test, can split later if domain test count grows
 
-**Next (Day 4):**
-- Begin auth scaffolding: JWT bearer authentication, password hashing (BCrypt or ASP.NET Core Identity's PasswordHasher)
-- Real `HttpContextCurrentTenant` implementation that reads tenant ID from JWT claims, replacing the temporary `NoTenantCurrentTenant`
-- Auth endpoints: register, login, refresh
-- Decide whether to use ASP.NET Core Identity wholesale or roll a leaner custom auth (Identity is heavier than we need for a multi-tenant API; worth a deliberate decision)
+**Next (Day 3):**
+
+Auth plan locked. Going with hybrid ASP.NET Core Identity — pulling in `PasswordHasher<User>` from `Microsoft.AspNetCore.Identity` for password hashing only, skipping the full Identity tables, EF stores, UI scaffolding, and `IdentityUser` base class. Domain layer stays clean; the Identity dependency leaks into Infrastructure only.
+
+Other locked decisions:
+- Refresh tokens stored hashed in a dedicated DB table, rotated on every refresh, with revoke support — supports "log out everywhere" and per-device sessions
+- JWT signing: HS256 with secret from configuration (gitignored locally, env var in prod). Single API service so asymmetric keys would be overkill
+- Self-serve tenant signup: `RegisterTenantCommand` creates `Tenant` + first `User` (role = Owner) atomically
+- `UserRole` enum added now (`Owner`, `Member`) even though invite flow is Week 2 work — JWT will carry `role` claim from day one to avoid claim-shape migrations later
+- Role-specific User factories: `User.CreateOwner` and `User.CreateMember`, mirroring the `Message.FromVisitor/FromAssistant/FromHumanAgent` pattern
+- Invite flow itself deferred to Week 2 alongside knowledge base work — they share email infrastructure and Owner-only authorization patterns
+
+Six-commit structure for Day 3:
+1. `chore(deps)`: auth-related NuGet packages
+2. `feat(domain)`: `UserRole` enum, password hash on `User`, role-specific factories, `RefreshToken` child entity, migration
+3. `feat(application)`: `IPasswordHasher` abstraction, JWT options, `RegisterTenantCommand` / `LoginCommand` / `RefreshTokenCommand` with FluentValidation
+4. `feat(infrastructure)`: `JwtTokenService`, `PasswordHasher<User>` registration, refresh token persistence
+5. `feat(api)`: JWT bearer middleware, `/api/auth/register|login|refresh` endpoints, real `HttpContextCurrentTenant` replacing `NoTenantCurrentTenant`, `RequireOwner` / `RequireMember` policies registered (not yet attached)
+6. `test(api)`: integration tests for register and login happy paths
