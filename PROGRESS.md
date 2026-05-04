@@ -44,6 +44,7 @@ A daily log of what got built, what got stuck, and what's next.
 - Created gitignored `appsettings.Development.json` with local Postgres + Redis connection strings
 - Created committed `appsettings.Development.json.example` as a template for setup
 - Updated README with proper "Getting started" section
+- Made 7 commits with conventional commit messages
 
 *Domain layer*
 - `EntityBase` abstract class with Id (Guid), CreatedAt, UpdatedAt, Touch() helper
