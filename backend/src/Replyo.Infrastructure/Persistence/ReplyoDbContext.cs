@@ -1,11 +1,12 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Replyo.Application.Common.Abstractions;
 using Replyo.Application.Common.Multitenancy;
 using Replyo.Domain.Entities;
 
 namespace Replyo.Infrastructure.Persistence;
 
-public class ReplyoDbContext : DbContext
+public class ReplyoDbContext : DbContext, IApplicationDbContext
 {
     private readonly ICurrentTenant _currentTenant;
 

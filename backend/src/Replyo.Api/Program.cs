@@ -1,49 +1,39 @@
-using Microsoft.EntityFrameworkCore;
-using Replyo.Application.Common.Multitenancy;
-using Replyo.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Replyo.Application;
+using Replyo.Infrastructure;
 using Scalar.AspNetCore;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
 
-var connectionString = builder.Configuration.GetConnectionString("Postgres")
+builder.Services
+    .AddApplication()
+    .AddInfrastructure(builder.Configuration, builder.Environment.IsDevelopment());
+
+// Health checks read connection strings directly rather than going through Infrastructure
+// because they're an HTTP/pipeline concern (MapHealthChecks below) wired in this layer.
+// Acceptable duplication: the Postgres string is also read inside AddInfrastructure.
+var postgresConnectionString = builder.Configuration.GetConnectionString("Postgres")
     ?? throw new InvalidOperationException("Postgres connection string not configured.");
 
 var redisConnectionString = builder.Configuration.GetConnectionString("Redis")
     ?? throw new InvalidOperationException("Redis connection string not configured.");
 
-builder.Services.AddDbContext<ReplyoDbContext>(options =>
-{
-    options.UseNpgsql(connectionString, npgsql =>
-    {
-        npgsql.UseVector();
-    });
-
-    if (builder.Environment.IsDevelopment())
-    {
-        options.EnableSensitiveDataLogging();
-        options.EnableDetailedErrors();
-    }
-});
-
-builder.Services.AddScoped<ICurrentTenant, NoTenantCurrentTenant>();
-
-
 builder.Services
     .AddHealthChecks()
     .AddNpgSql(
-        connectionString,
+        postgresConnectionString,
         name: "postgres",
         tags: new[] { "ready", "db" })
     .AddRedis(
         redisConnectionString,
         name: "redis",
         tags: new[] { "ready", "cache" });
-        
+
 var app = builder.Build();
 
 app.UseHttpsRedirection();
@@ -75,7 +65,6 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions
     ResponseWriter = WriteHealthCheckResponse
 });
 
-
 app.Run();
 
 static Task WriteHealthCheckResponse(HttpContext context, HealthReport report)
@@ -99,10 +88,4 @@ static Task WriteHealthCheckResponse(HttpContext context, HealthReport report)
     return context.Response.WriteAsJsonAsync(payload);
 }
 
-internal sealed class NoTenantCurrentTenant : ICurrentTenant
-{
-    public Guid? TenantId => null;
-}
-
 public partial class Program;
-
