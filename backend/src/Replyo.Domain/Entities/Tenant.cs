@@ -7,7 +7,8 @@ namespace Replyo.Domain.Entities;
 public class Tenant : EntityBase
 {
     // Lowercase alphanumeric with single hyphens between segments, no leading/trailing hyphen.
-    // Examples: "acme", "acme-corp", "acme-corp-2". Rejects: "Acme", "acme corp", "-acme", "acme--corp".
+    // Examples that match: "acme", "acme-corp", "acme-corp-2".
+    // Examples that don't: "Acme", "acme corp", "-acme", "acme--corp", "acme-".
     private static readonly Regex SlugFormat = new(
         @"^[a-z0-9]+(-[a-z0-9]+)*$",
         RegexOptions.Compiled);
