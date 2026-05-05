@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Replyo.Domain.Common;
 using Replyo.Domain.Enums;
 
@@ -5,6 +6,12 @@ namespace Replyo.Domain.Entities;
 
 public class Tenant : EntityBase
 {
+    // Lowercase alphanumeric with single hyphens between segments, no leading/trailing hyphen.
+    // Examples: "acme", "acme-corp", "acme-corp-2". Rejects: "Acme", "acme corp", "-acme", "acme--corp".
+    private static readonly Regex SlugFormat = new(
+        @"^[a-z0-9]+(-[a-z0-9]+)*$",
+        RegexOptions.Compiled);
+
     public string Name { get; private set; } = string.Empty;
     public string Slug { get; private set; } = string.Empty;
     public TenantStatus Status { get; private set; } = TenantStatus.Active;
@@ -27,10 +34,15 @@ public class Tenant : EntityBase
         if (string.IsNullOrWhiteSpace(slug))
             throw new ArgumentException("Tenant slug is required.", nameof(slug));
 
+        if (!SlugFormat.IsMatch(slug))
+            throw new ArgumentException(
+                "Slug must be lowercase alphanumeric with single hyphens (e.g., 'acme-corp').",
+                nameof(slug));
+
         return new Tenant
         {
             Name = name.Trim(),
-            Slug = slug.Trim().ToLowerInvariant()
+            Slug = slug
         };
     }
 
@@ -66,5 +78,4 @@ public class Tenant : EntityBase
         Status = TenantStatus.Active;
         Touch();
     }
-
 }
