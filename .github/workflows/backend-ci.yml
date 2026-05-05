@@ -20,9 +20,17 @@ jobs:
       run:
         working-directory: backend
 
+    # CI uses placeholder connection strings so app startup succeeds without a real
+    # Postgres or Redis. The current test suite only exercises /health/live, which
+    # has no dependencies, so placeholders are sufficient. When DB-touching tests
+    # land in week 2, this gets replaced with a real Postgres service container.
+    env:
+      ConnectionStrings__Postgres: "Host=localhost;Database=replyo_ci;Username=ci;Password=ci"
+      ConnectionStrings__Redis: "localhost:6379"
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
@@ -30,7 +38,7 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Cache NuGet packages
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
