@@ -172,15 +172,74 @@ A daily log of what got built, what got stuck, and what's next.
 - `UserRole` enum added now even though invite flow is Week 2 — JWT will carry `role` claim from day one to avoid claim-shape migrations later
 - Three commits for the domain/persistence/migration work even though they're tightly related — each commit reads as a coherent unit on its own. Future-self reading `git log` gets a clear story instead of one mega-commit
 
+## Day 4 — May 5, 2026
 
-**Next (Day 4):**
+**Done:**
 
-Resume the auth plan at commit 4 of 6:
+*GitHub repo published and configured*
+- Audited git history for secrets before pushing — confirmed `appsettings.Development.json`, `.env*`, and any production-templated configs never made it into history; broader scan for `password|secret|api_key|connectionstring` returned only legitimate hits (column names, type identifiers, the literal word "password" inside PROGRESS prose)
+- Verified `.gitignore` coverage end-to-end including `*.pem` / `*.key` catch-all for future JWT signing key files
+- Created public repo at `github.com/amer-karkoush/replyo`, set description and topics, configured "Include in homepage" sidebar (Releases, Packages, Deployments visible; Environments and "Used by" hidden until they have content)
+- Initial push: 246 objects, 106 KiB
 
-- **Application layer** — `IPasswordHasher` abstraction, `JwtOptions` strongly-typed config binding, `RegisterTenantCommand` (creates Tenant + Owner User atomically), `LoginCommand`, `RefreshTokenCommand`, FluentValidation validators for each. No HTTP yet
-- **Infrastructure layer** — `JwtTokenService` (using `JsonWebTokenHandler`, the modern API; not `JwtSecurityTokenHandler`), `PasswordHasher<User>` DI registration, refresh token repository operations
+*README polish*
+- Marked planned-vs-current infrastructure explicitly (GitHub Actions, Railway, Vercel, Sentry as "Planned"; Docker Compose as current local dev)
+- Added `dotnet ef database update` step that the Day 2 README had missed — anyone following the README on a clean machine would have hit a runtime DB-missing error
+- Added EF Core CLI tools to prerequisites
+- Documented Scalar API explorer URL (`/scalar/v1`) and the two health endpoints
+- Decided to keep MIT license — for a job-hunt portfolio repo, MIT is the well-understood signal recruiters expect
+- Kept SignalR in the stack list with a "Planned" footnote rather than removing — the stack list functions as "what this project is built on" for portfolio reading, not strictly "what runs today"
+
+*CI workflow*
+- Created `.github/workflows/backend-ci.yml` — runs on push to main and PRs targeting main
+- `actions/checkout@v6`, `actions/setup-dotnet@v5`, `actions/cache@v5` — all on Node 24, ahead of the June 2026 enforcement of the Node 20 deprecation
+- NuGet cache keyed by `*.csproj` and `Directory.Packages.props` hashes
+- Standard restore → build → test pipeline, all in `Release` configuration
+- First run failed: `HealthEndpointTests.GetLiveness_ReturnsHealthy` threw `ArgumentNullException` from `AddNpgSql` because `appsettings.Development.json` is gitignored, so `GetConnectionString("Postgres")` returned null in CI. Fixed by adding placeholder `Host=...` connection strings via job-level `env:` block, with an explicit comment that this is a deferred-fix bridge until DB-touching tests land in Week 2 and we add a Postgres service container
+- Both tests now passing in CI in ~2-3 minutes
+
+*Branch protection*
+- Created ruleset on `main`: require PR before merge (0 approvals, since solo), require `build and test` status check, require branches up-to-date before merge, require linear history, require conversation resolution, restrict deletions, block force pushes, no admin bypass
+- Configured repo merge methods: rebase-merge only — disabled merge commits and squash. Rebase preserves commit-by-commit history on main, which matters because PROGRESS.md is supposed to map to commits
+- Verified protection works by attempting a direct push to main — got the `GH013: Repository rule violations` rejection citing both rules (PR required, status check required)
+
+*PR-based workflow walkthrough*
+- First PR cycle done end-to-end: feature branch → push → PR → CI → rebase-merge → branch delete
+- Discovered a deadlock in the workflow's path filter mid-walkthrough: empty test commit triggered no path matches, so CI never ran, so the required check never reported, so the merge button was permanently disabled. Fixed by switching `paths:` (allowlist) to `paths-ignore:` (denylist) — workflow now runs on any change except pure documentation (`**.md`, `docs/**`)
+- Empty test commit + empty revert commit both remain in main's history. Cosmetic noise, intentionally left alone because rewriting public history breaks anyone who's pulled (technically only me, but the principle is worth keeping)
+
+*Commits*
+- 6 commits today, all conventional. Two of them landed via the new PR-based workflow (rebase-merge), proving the gate works
+
+
+**Stuck / resolved:**
+- CI failure on first run was the most useful failure of the day — it surfaced a real over-coupling: the liveness *test* was spinning up the entire app, including the Postgres readiness *check registration*, even though liveness has no DB dependency. The placeholder-connection-string fix is pragmatic but flagged as debt; the proper fix is either Postgres in CI (Week 2 when needed for DB tests) or `WebApplicationFactory.WithWebHostBuilder` overriding the health check registration in test setup
+- Branch protection ruleset created with all rules configured but never actually saved — the form was filled in but the "Create" button at the bottom hadn't been clicked. Discovered by attempting to push and observing it succeeded. Resolved by going back, naming the ruleset, setting Enforcement to Active, clicking Create
+- Even with ruleset saved, second test push still went through. Cause: ruleset had no target branches — typing `main` in the pattern field isn't enough; the target has to be explicitly added via "Include default branch" or "Include by pattern". Banner at the top of the rule edit page literally said "this ruleset is not targeting any resource and will not be applied" but I missed it on first read. Once `main` was added as target, third test push correctly rejected
+- `git revert b481af1` silently no-op'd on the empty test commit — git doesn't create a revert when the diff is empty. `git revert --allow-empty` doesn't exist on the installed git version (2.45). Resolved by using `git commit --allow-empty -m "Revert..."` directly — same end result, doesn't depend on `git revert`'s empty-commit handling
+- Path filter deadlock on the first PR: empty commit didn't match `paths: [backend/**, .github/workflows/backend-ci.yml]`, so CI didn't run, so the required check never reported, so merge stayed locked. The general lesson: include-by-allowlist path filters create a deadlock between "skip CI" and "require CI" — denylist (`paths-ignore`) avoids it because the default is "run"
+- Rebase-merge produces a "branch deleted but not merged to HEAD" warning on local cleanup because rebase creates new commit hashes — the local feature branch still points at the pre-rebase hashes, which aren't on main. Cosmetic warning, not a problem; specific to rebase-merge
+
+
+**Decisions:**
+- Public repo from day one — process visibility (PROGRESS, commit hygiene, PR flow) is the senior signal, not artifact polish. A repo that springs into existence fully-formed reads as suspicious; one that shows three days of careful, conventional commits with a journal reads as authentic
+- Skipped GPG/SSH commit signing for now — would require setup, and "Require signed commits" in the ruleset would block all my commits today. Deferred to a separate ergonomics exercise; not a security gap for a solo portfolio repo
+- Rebase-merge only, no merge commits, no squash — preserves commit-by-commit history on main, keeps PROGRESS-to-git mapping intact. Squash would collapse a PR's careful focused commits into one, destroying the trail
+- Placeholder connection strings in CI rather than spinning up Postgres now — Postgres-in-CI adds 30-60s per run for tests that don't need it. Real Postgres comes when real DB tests need it
+- `paths-ignore` over `paths` — denylist defaults are safer for required-check workflows. Allowlists deadlock on any change that doesn't match the allowlist; denylists only skip what you're sure doesn't matter
+- Application-layer command/handler structure: **plain handler classes injected directly into endpoints**, no dispatcher abstraction. The dispatcher seam earns its keep when there are cross-cutting concerns to centralize (transactional outbox, validation pipeline, decorators) — without those, building a dispatcher abstracts nothing. Three handlers in the auth slice are not a use case for a dispatcher. Open door to add one later if a real cross-cutting concern emerges (this resolves Day 3's open question)
+- Did not touch the auth Application layer today — infrastructure setup was a deliberate detour, not a delay. Recoverable starting point for tomorrow is identical to Day 3's
+
+**Next (Day 5):**
+
+Resume the auth plan at commit 4 of 6 (this is unchanged from Day 3's `Next`, except handler structure is now decided):
+
+- **Application layer** — `IPasswordHasher` abstraction, `JwtOptions` strongly-typed config binding (`Microsoft.Extensions.Options.ConfigurationExtensions` already in deps via ASP.NET Core baseline), `RegisterTenantCommand` (creates Tenant + Owner User atomically), `LoginCommand`, `RefreshTokenCommand`, FluentValidation validators for each. Plain handler classes (`IRegisterTenantHandler` etc.), no dispatcher. No HTTP yet
+- **Infrastructure layer** — `JwtTokenService` using `JsonWebTokenHandler` (the modern API; not `JwtSecurityTokenHandler`), `PasswordHasher<User>` DI registration, refresh token repository operations
 - **Api layer** — JWT bearer middleware, `POST /api/auth/register | login | refresh` endpoints, real `HttpContextCurrentTenant` reading `tenant_id` from `ClaimsPrincipal` (replacing the temporary `NoTenantCurrentTenant`), `RequireOwner` / `RequireMember` authorization policies registered (not yet attached to endpoints)
-- **Tests** — integration tests for register and login happy paths
+- **Tests** — integration tests for register and login happy paths. The placeholder connection string in CI will not be sufficient for these — they hit the database. Two options: spin up Postgres as a service container in the CI workflow, or use `Testcontainers.PostgreSql` for self-contained DB lifecycles per test class. 
 
-Open question to revisit before commit 4:
-- Application-layer command/handler structure — does Day 4 introduce a mediator pattern (the locked stack rejects MediatR specifically), keep handlers as plain services injected directly into endpoints, or use minimal-API endpoint filters? Worth a deliberate decision rather than defaulting to whatever's fastest
+All future commits go through PRs. No more direct pushes to main — branch protection enforces it.
+
+Open question to revisit before next commit:
+- Application-layer command/handler structure — does Day 4 introduce a mediator pattern (locked stack rejects MediatR specifically), keep handlers as plain services injected directly into endpoints, or use minimal-API endpoint filters? Worth a deliberate decision rather than defaulting to whatever's fastest
