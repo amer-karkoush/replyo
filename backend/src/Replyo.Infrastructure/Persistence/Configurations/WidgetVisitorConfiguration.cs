@@ -18,6 +18,7 @@ public class WidgetVisitorConfiguration : IEntityTypeConfiguration<WidgetVisitor
         builder.Property(v => v.Email).HasColumnName("email").HasMaxLength(255);
         builder.Property(v => v.Name).HasColumnName("name").HasMaxLength(200);
         builder.Property(v => v.UserAgent).HasColumnName("user_agent").HasMaxLength(500);
+        // 45 covers the longest IPv6 representation (including IPv4-mapped form like ::ffff:192.0.2.0).
         builder.Property(v => v.IpAddress).HasColumnName("ip_address").HasMaxLength(45);
         builder.Property(v => v.LastSeenAt).HasColumnName("last_seen_at");
         builder.Property(v => v.CreatedAt).HasColumnName("created_at");

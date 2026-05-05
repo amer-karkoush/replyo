@@ -6,12 +6,15 @@ namespace Replyo.Infrastructure.Persistence.Configurations;
 
 public class MessageConfiguration : IEntityTypeConfiguration<Message>
 {
+    
     public void Configure(EntityTypeBuilder<Message> builder)
     {
         builder.ToTable("messages");
 
         builder.HasKey(m => m.Id);
 
+        // tenant_id is denormalized for query filtering and tenant isolation;
+        // FK to tenants is enforced transitively through Conversation.
         builder.Property(m => m.Id).HasColumnName("id");
         builder.Property(m => m.TenantId).HasColumnName("tenant_id");
         builder.Property(m => m.ConversationId).HasColumnName("conversation_id");

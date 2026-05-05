@@ -8,6 +8,7 @@ namespace Replyo.Infrastructure.Persistence.Configurations;
 
 public class KnowledgeChunkConfiguration : IEntityTypeConfiguration<KnowledgeChunk>
 {
+    // Matches OpenAI text-embedding-3-small output dimension.
     public const int EmbeddingDimensions = 1536;
 
     public void Configure(EntityTypeBuilder<KnowledgeChunk> builder)
@@ -28,6 +29,7 @@ public class KnowledgeChunkConfiguration : IEntityTypeConfiguration<KnowledgeChu
         builder.Property(c => c.Embedding)
             .HasColumnName("embedding")
             .HasColumnType($"vector({EmbeddingDimensions})")
+            // Domain holds float[] (no Pgvector dependency); pgvector requires Vector at the DB boundary.
             .HasConversion(
                 v => new Vector(v),
                 v => v.ToArray());
