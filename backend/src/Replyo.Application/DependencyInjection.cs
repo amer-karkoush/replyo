@@ -12,9 +12,9 @@ public static class DependencyInjection
     {
         services.AddValidatorsFromAssembly(typeof(DependencyInjection).Assembly);
         
-        services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();
-        services.AddScoped<ILoginHandler, LoginHandler>();
-        services.AddScoped<IRefreshTokenHandler, RefreshTokenHandler>();
+        // services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>();
+        // services.AddScoped<ILoginHandler, LoginHandler>();
+        // services.AddScoped<IRefreshTokenHandler, RefreshTokenHandler>();
         return services;
     }
 }
