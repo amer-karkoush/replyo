@@ -172,6 +172,8 @@ A daily log of what got built, what got stuck, and what's next.
 - `UserRole` enum added now even though invite flow is Week 2 — JWT will carry `role` claim from day one to avoid claim-shape migrations later
 - Three commits for the domain/persistence/migration work even though they're tightly related — each commit reads as a coherent unit on its own. Future-self reading `git log` gets a clear story instead of one mega-commit
 
+---
+
 ## Day 4 — May 5, 2026
 
 **Done:**
@@ -236,6 +238,8 @@ Commit 4c — `Login` and `RefreshToken` commands. LoginHandler returns generic 
 
 **Decisions:**
 
+- **All future commits go through PRs.** Branch protection on `main` enforces this; verified earlier today by attempted direct push that was correctly rejected. Operating instructions describing "deferred GitHub commits" are stale
+
 - **Application-layer command/handler structure**: plain handlers with self-validation via `await _validator.ValidateAndThrowAsync(command, ct)` as the first line. `ICommandHandler<TCommand, TResult>` interface plus a marker interface per handler (`IRegisterTenantHandler : ICommandHandler<RegisterTenantCommand, RegisterTenantResult>`). No mediator, no endpoint filters for validation — handler self-validation works across HTTP, Hangfire, and SignalR entry points uniformly
 
 - **File and folder layout**: file-per-type, folder-per-command. `Auth/Commands/RegisterTenant/{Command,Result,Validator,Handler}.cs`. Cross-cutting abstractions in `Common/Abstractions/`, options classes in `Common/Configuration/`
@@ -267,7 +271,7 @@ Commit 4c — `Login` and `RefreshToken` commands. LoginHandler returns generic 
 
 **Known issues (deferred, tracked for future commits):**
 
-- TOCTOU race on email/slug uniqueness in `RegisterTenantHandler` — pre-check passes, unique constraint catches on save, surfaces as 500 instead of 409. Fix in commit 4d alongside the `IExceptionHandler` for `ConflictException` because the proper fix lives in API/Infrastructure where Npgsql can be referenced legitimately. Application layer mustn't depend on Npgsql
+- TOCTOU race on email/slug uniqueness in `RegisterTenantHandler` — pre-check passes, unique constraint catches on save, surfaces as 500 instead of 409. Fix in commit 4e alongside the `IExceptionHandler` for `ConflictException` because the proper fix lives in API/Infrastructure where Npgsql can be referenced legitimately. Application layer mustn't depend on Npgsql
 
 - SHA-256 hashing of refresh tokens duplicated across three sites: production `RefreshTokenHandler.HashRefreshToken`, test `FakeJwtTokenService.HashRefreshToken`, test `RefreshTokenHandlerTests.HashForTest`. Real `JwtTokenService` (commit 4d) will be the fourth. Extract to a shared helper in `Common/` when 4d lands
 
@@ -280,44 +284,14 @@ Commit 4c — `Login` and `RefreshToken` commands. LoginHandler returns generic 
 
 **Next (Day 5):**
 
-Resume the auth plan at commit 4 of 6, but split into three smaller commits:
-
-- **Commit 4d-i — Infrastructure layer:**
-  - `JwtTokenService` implementation using `Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler` (the modern API; **not** `JwtSecurityTokenHandler` from the legacy stack)
-  - `PasswordHasher` wrapping `Microsoft.Extensions.Identity.Core`'s `PasswordHasher<User>`, translating its `PasswordVerificationResult` to our three-state `PasswordVerificationOutcome`
-  - SHA-256 refresh-token-hashing helper extracted to `Common/` (the fourth caller triggers extraction per the rule above)
-  - DI registration in `AddInfrastructure`: bind `JwtOptions` from configuration with `ValidateDataAnnotations()` + `ValidateOnStart()`
-
-- **Commit 4d-ii — Api layer:**
-  - JWT bearer middleware (`AddAuthentication().AddJwtBearer(...)`)
-  - `POST /api/auth/register | login | refresh` minimal-API endpoints (or controllers — decide before writing; minimal-APIs lean cleaner here)
-  - Replace `NoTenantCurrentTenant` with real `HttpContextCurrentTenant` reading `tenant_id` from `ClaimsPrincipal`
-  - `IExceptionHandler`s for `ConflictException` → 409, `UnauthorizedException` → 401, `ValidationException` → 400 with `ValidationProblemDetails`
-  - TOCTOU race fix lands here: catch `DbUpdateException` with Postgres SQLSTATE 23505 in an Infrastructure-side `SaveChangesInterceptor` or inside the exception handler, translate to `ConflictException`
-  - `RequireOwner` / `RequireMember` authorization policies registered (not yet attached to endpoints — Week 2 work)
-
-- **Commit 4d-iii — Integration tests:**
-  - `WebApplicationFactory<Program>`-based integration tests for register and login happy paths
-  - Open question: share `PostgresFixture` between `Application.Tests` and `Api.Tests`, or have `Api.Tests` use the dev Docker Compose Postgres? Option 1 is more self-contained, Option 2 is faster. Decide before writing
-
-Open question worth resolving before Day 5 starts:
-- Operating instructions update — they're stale on the GitHub-commits-deferred point and silent on a few decisions made today (clean-architecture handler interface convention, Testcontainers for handler tests, hand-rolled fakes over mocking library, plural folder naming for entity-named features). Worth a small editing pass at the start of Day 5
-
----
-
-**Next (Day 5):**
-
 This session executed most of what the earlier Day 4 Next block called "commit 4 of 6": all three Application-layer auth commands (Register, Login, Refresh) plus their validators, plus test infrastructure (Testcontainers + replay-detection coverage) that the original plan had at the end. What remains is Infrastructure, Api, and integration tests — split into three smaller commits because the work is bigger than a single commit deserves.
 
-*Workflow constraint:*
-- All future commits go through PRs. Branch protection on `main` enforces this; direct push to main was verified blocked earlier on Day 4. The operating instructions still describe a "deferred GitHub commits" workflow that no longer applies — update on next major edit
-
 *Resolved from the earlier Next block:*
-- Application-layer command/handler structure question (mediator vs. plain services vs. endpoint filters) resolved in favor of plain handler classes with self-validation via injected `IValidator<T>`. `ICommandHandler<TCommand, TResult>` plus a marker interface per handler. No mediator. See Decisions section above for the reasoning
+- The handler-structure question (mediator vs. plain services vs. endpoint filters) resolved in favor of plain handlers with self-validation. See Decisions above
 
 ---
 
-**Commit 4d-i — Infrastructure layer:**
+**Commit 4d — Infrastructure layer:**
 
 - `JwtTokenService` implementing `IJwtTokenService`, using `Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler` (the modern API; **not** `JwtSecurityTokenHandler` from the legacy stack)
 - `PasswordHasher` implementing `IPasswordHasher`, wrapping `Microsoft.Extensions.Identity.Core`'s `PasswordHasher<User>`. Translate Microsoft's `PasswordVerificationResult` (`Failed` / `Success` / `SuccessRehashNeeded`) to our three-state `PasswordVerificationOutcome`. The `User` generic parameter on Microsoft's hasher is required but doesn't actually constrain — the hash is opaque
@@ -330,7 +304,7 @@ This session executed most of what the earlier Day 4 Next block called "commit 4
 
 ---
 
-**Commit 4d-ii — Api layer:**
+**Commit 4e — Api layer:**
 
 - JWT bearer middleware: `AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options => ...)` configured from the same `JwtOptions` instance Infrastructure binds. `TokenValidationParameters` set with `ValidateIssuer`, `ValidateAudience`, `ValidateLifetime`, `ValidateIssuerSigningKey` all true
 - Three minimal-API endpoints: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`. Each binds the corresponding command from the request body (with `[FromBody]`), captures `HttpContext.Connection.RemoteIpAddress` for the `CreatedByIp` field, and dispatches to the handler
@@ -352,7 +326,7 @@ This session executed most of what the earlier Day 4 Next block called "commit 4
 
 ---
 
-**Commit 4d-iii — Integration tests:**
+**Commit 4f — Integration tests:**
 
 - `WebApplicationFactory<Program>`-based integration tests in `Replyo.Api.Tests`:
   - `RegisterEndpointTests.PostRegister_WithValidPayload_Returns201AndTokenPair`
@@ -364,7 +338,7 @@ This session executed most of what the earlier Day 4 Next block called "commit 4
   - Share `PostgresFixture` between `Application.Tests` and `Api.Tests`, or have `Api.Tests` use the existing dev Docker Compose Postgres directly?
     - Option 1 (shared fixture): self-contained, each test class manages its own container, ~5-10s startup per test class. Cleaner CI story (no separate service container needed)
     - Option 2 (dev Postgres): faster (no per-test container startup), but tests now depend on `docker-compose up -d` having been run, and CI needs a Postgres service container in the workflow yaml
-  - Lean is Option 1 (shared `PostgresFixture` extracted to a shared test utility project, or duplicated as `ApiPostgresFixture` in `Api.Tests`). Trade-off: slower test runs, simpler dependencies. Worth one explicit decision when 4d-iii starts
+  - Lean is Option 1 (shared `PostgresFixture` extracted to a shared test utility project, or duplicated as `ApiPostgresFixture` in `Api.Tests`). Trade-off: slower test runs, simpler dependencies. Worth one explicit decision when 4f starts
 
 ---
 
@@ -376,6 +350,6 @@ This session executed most of what the earlier Day 4 Next block called "commit 4
   - Could capture the architectural decisions made today (clean-architecture handler interface convention, plural folder naming for entity-named features, Testcontainers as the testing pattern, hand-rolled fakes over a mocking library)
   - Doesn't have to happen at the start of Day 5; can drift to whenever a major edit is happening anyway
 
-- **Decide on minimal APIs vs controllers for the auth endpoints** before writing 4d-ii. Defer to start of 4d-ii rather than pre-deciding now — the decision is small enough that fresh context helps
+- **Decide on minimal APIs vs controllers for the auth endpoints** before writing 4e. Defer to start of 4e rather than pre-deciding now — the decision is small enough that fresh context helps
 
-- **Decide on `SaveChangesInterceptor` vs exception handler** for the unique-violation-to-ConflictException translation in 4d-ii. Same — defer to start of that commit
+- **Decide on `SaveChangesInterceptor` vs exception handler** for the unique-violation-to-ConflictException translation in 4e. Same — defer to start of that commit
