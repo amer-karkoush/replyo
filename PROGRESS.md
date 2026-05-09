@@ -176,70 +176,206 @@ A daily log of what got built, what got stuck, and what's next.
 
 **Done:**
 
-*GitHub repo published and configured*
-- Audited git history for secrets before pushing — confirmed `appsettings.Development.json`, `.env*`, and any production-templated configs never made it into history; broader scan for `password|secret|api_key|connectionstring` returned only legitimate hits (column names, type identifiers, the literal word "password" inside PROGRESS prose)
-- Verified `.gitignore` coverage end-to-end including `*.pem` / `*.key` catch-all for future JWT signing key files
-- Created public repo at `github.com/amer-karkoush/replyo`, set description and topics, configured "Include in homepage" sidebar (Releases, Packages, Deployments visible; Environments and "Used by" hidden until they have content)
-- Initial push: 246 objects, 106 KiB
+*GitHub & CI (earlier in the day)*
+- Set up GitHub remote, pushed initial commits
+- CI workflow for backend with paths-ignore configuration
+- Branch protection on main (verified by attempted direct push that was correctly blocked)
+- Adjusted paths-ignore to drop `**.md` so docs PRs still run CI
 
-*README polish*
-- Marked planned-vs-current infrastructure explicitly (GitHub Actions, Railway, Vercel, Sentry as "Planned"; Docker Compose as current local dev)
-- Added `dotnet ef database update` step that the Day 2 README had missed — anyone following the README on a clean machine would have hit a runtime DB-missing error
-- Added EF Core CLI tools to prerequisites
-- Documented Scalar API explorer URL (`/scalar/v1`) and the two health endpoints
-- Decided to keep MIT license — for a job-hunt portfolio repo, MIT is the well-understood signal recruiters expect
-- Kept SignalR in the stack list with a "Planned" footnote rather than removing — the stack list functions as "what this project is built on" for portfolio reading, not strictly "what runs today"
+*Application-layer auth foundation (commits 4a → 4c)*
 
-*CI workflow*
-- Created `.github/workflows/backend-ci.yml` — runs on push to main and PRs targeting main
-- `actions/checkout@v6`, `actions/setup-dotnet@v5`, `actions/cache@v5` — all on Node 24, ahead of the June 2026 enforcement of the Node 20 deprecation
-- NuGet cache keyed by `*.csproj` and `Directory.Packages.props` hashes
-- Standard restore → build → test pipeline, all in `Release` configuration
-- First run failed: `HealthEndpointTests.GetLiveness_ReturnsHealthy` threw `ArgumentNullException` from `AddNpgSql` because `appsettings.Development.json` is gitignored, so `GetConnectionString("Postgres")` returned null in CI. Fixed by adding placeholder `Host=...` connection strings via job-level `env:` block, with an explicit comment that this is a deferred-fix bridge until DB-touching tests land in Week 2 and we add a Postgres service container
-- Both tests now passing in CI in ~2-3 minutes
+Commit 4a — auth abstractions:
+- `ICommandHandler<TCommand, TResult>` as the single application-layer handler contract; handlers self-validate via injected FluentValidation validators so the contract holds across HTTP, Hangfire, and SignalR entry points
+- `IPasswordHasher` with three-state `PasswordVerificationOutcome` (`Failed` / `Success` / `SuccessRehashNeeded`) — supports transparent rehashing when stored PBKDF2 iteration counts age out
+- `IJwtTokenService` returning an `IssuedTokens` record carrying both the plaintext refresh token (for the client) and its hash (for storage), keeping the hashing algorithm an implementation detail
+- `JwtOptions` with data-annotation validation for fail-fast startup if the signing key is missing or too short for HS256
 
-*Branch protection*
-- Created ruleset on `main`: require PR before merge (0 approvals, since solo), require `build and test` status check, require branches up-to-date before merge, require linear history, require conversation resolution, restrict deletions, block force pushes, no admin bypass
-- Configured repo merge methods: rebase-merge only — disabled merge commits and squash. Rebase preserves commit-by-commit history on main, which matters because PROGRESS.md is supposed to map to commits
-- Verified protection works by attempting a direct push to main — got the `GH013: Repository rule violations` rejection citing both rules (PR required, status check required)
+Commit 4b-prep-deps — pinned `FluentValidation` and `FluentValidation.DependencyInjectionExtensions` from `11.*` to `11.12.0`, matching the EF Core pinning from Day 2
 
-*PR-based workflow walkthrough*
-- First PR cycle done end-to-end: feature branch → push → PR → CI → rebase-merge → branch delete
-- Discovered a deadlock in the workflow's path filter mid-walkthrough: empty test commit triggered no path matches, so CI never ran, so the required check never reported, so the merge button was permanently disabled. Fixed by switching `paths:` (allowlist) to `paths-ignore:` (denylist) — workflow now runs on any change except pure documentation (`**.md`, `docs/**`)
-- Empty test commit + empty revert commit both remain in main's history. Cosmetic noise, intentionally left alone because rewriting public history breaks anyone who's pulled (technically only me, but the principle is worth keeping)
+Commit 4b-prep — extracted `AddApplication()` and `AddInfrastructure()` DI extension methods so Program.cs delegates layer registration. `IApplicationDbContext` interface added in Application layer; `ReplyoDbContext` implements it. `NoTenantCurrentTenant` placeholder moved from Program.cs to Infrastructure as `internal sealed`
 
-*Commits*
-- 6 commits today, all conventional. Two of them landed via the new PR-based workflow (rebase-merge), proving the gate works
+Commit 4b — `RegisterTenant` command, handler, validator. Creates tenant + Owner user atomically in a single `SaveChangesAsync` transaction. Email uniqueness checked against the lowercase-normalized form to match `User.Create`'s internal normalization. Slug uniqueness via `SlugGenerator` + 6-char random suffix on collision. `ConflictException` added in `Common/Exceptions/`. `SlugGenerator` strips diacritics (Café → cafe) and falls back to "tenant" for emoji-only inputs
+
+Commit 4b-followup (×2) — `Tenant.Create` enforces slug regex format invariant (`^[a-z0-9]+(-[a-z0-9]+)*$`); dropped `.ToLowerInvariant()` so the entity tells callers the rules instead of silently fixing bad input. Landed as two commits with the same subject because the `.ToLowerInvariant()` removal got missed in the first pass and was caught and committed separately
+
+Commit 4c — `Login` and `RefreshToken` commands. LoginHandler returns generic "invalid email or password" on lookup or verification failure to prevent account enumeration; active-status check happens after password verification so deactivated-account messages only reach users who proved they own the account; transparent password rehashing fires on a successful login when stored hash uses outdated parameters. RefreshTokenHandler implements rotation chain replay detection: on presentation of an already-revoked token, all of the user's active refresh tokens are revoked (log out everywhere) since we can't distinguish legitimate replay from malicious. `UnauthorizedException` added. Folder named `RefreshTokens/` (plural) to avoid namespace collision with `Domain.Entities.RefreshToken`. All three handlers registered as scoped services in `AddApplication()`
+
+*Test infrastructure (commits 4c-tests-prep + 4c-tests)*
+
+- Pinned `FluentAssertions` (6.*) and `Moq` (4.*) to resolved versions; same convention as deps pinning above
+- Removed unused `Microsoft.EntityFrameworkCore.Sqlite` package after the SQLite path failed
+- Removed unused `Moq` package — no tests in the project use it; hand-rolled fakes (`FakePasswordHasher`, `FakeJwtTokenService`, `FakeCurrentTenant`) are explicit and debuggable. Mocking library decision deferred until a test genuinely needs one
+- `[InternalsVisibleTo]` granted to `Replyo.Application.Tests` so internal handlers can be unit-tested without making them public
+- `PostgresFixture` — xUnit `IClassFixture` running pgvector/pgvector:pg16 container per test class, real `MigrateAsync()` against the container, per-test data reset via `ResetDatabaseAsync()`
+- `RefreshTokenHandlerTests` — control test (`HandleAsync_WhenPresentedWithValidToken_RotatesAndIssuesNewPair`) plus security test (`HandleAsync_WhenPresentedWithRevokedToken_RevokesAllActiveTokensForUser`) verifying replay detection revokes all active tokens for the user, not just the chain
+- First test run pulled the pgvector image (~25s), subsequent runs are 8s end-to-end
 
 
 **Stuck / resolved:**
-- CI failure on first run was the most useful failure of the day — it surfaced a real over-coupling: the liveness *test* was spinning up the entire app, including the Postgres readiness *check registration*, even though liveness has no DB dependency. The placeholder-connection-string fix is pragmatic but flagged as debt; the proper fix is either Postgres in CI (Week 2 when needed for DB tests) or `WebApplicationFactory.WithWebHostBuilder` overriding the health check registration in test setup
-- Branch protection ruleset created with all rules configured but never actually saved — the form was filled in but the "Create" button at the bottom hadn't been clicked. Discovered by attempting to push and observing it succeeded. Resolved by going back, naming the ruleset, setting Enforcement to Active, clicking Create
-- Even with ruleset saved, second test push still went through. Cause: ruleset had no target branches — typing `main` in the pattern field isn't enough; the target has to be explicitly added via "Include default branch" or "Include by pattern". Banner at the top of the rule edit page literally said "this ruleset is not targeting any resource and will not be applied" but I missed it on first read. Once `main` was added as target, third test push correctly rejected
-- `git revert b481af1` silently no-op'd on the empty test commit — git doesn't create a revert when the diff is empty. `git revert --allow-empty` doesn't exist on the installed git version (2.45). Resolved by using `git commit --allow-empty -m "Revert..."` directly — same end result, doesn't depend on `git revert`'s empty-commit handling
-- Path filter deadlock on the first PR: empty commit didn't match `paths: [backend/**, .github/workflows/backend-ci.yml]`, so CI didn't run, so the required check never reported, so merge stayed locked. The general lesson: include-by-allowlist path filters create a deadlock between "skip CI" and "require CI" — denylist (`paths-ignore`) avoids it because the default is "run"
-- Rebase-merge produces a "branch deleted but not merged to HEAD" warning on local cleanup because rebase creates new commit hashes — the local feature branch still points at the pre-rebase hashes, which aren't on main. Cosmetic warning, not a problem; specific to rebase-merge
+
+- Initial sketch of `RegisterTenantHandler` had `IApplicationDbContext _db` typed as the concrete `ReplyoDbContext` — broke the dependency direction (Application can't reference Infrastructure). Fixed by introducing the `IApplicationDbContext` interface in Application and forwarding the DI registration in Infrastructure: `services.AddScoped<IApplicationDbContext>(sp => sp.GetRequiredService<ReplyoDbContext>())`. Side effect: forced the DI extension method refactor
+
+- `Microsoft.Extensions.Hosting.IHostEnvironment` not resolvable from Infrastructure project — Infrastructure has no business referencing the ASP.NET Core framework. Resolved by changing `AddInfrastructure(..., IHostEnvironment)` to `AddInfrastructure(..., bool isDevelopment)`. The Api layer translates `builder.Environment.IsDevelopment()` to a bool at the call site
+
+- Day 2/Day 3 PROGRESS-vs-reality drift recurred this session in three places:
+  - `FluentValidation` versions floating at `11.*` despite the Day 2 pinning convention — caught when reviewing the csproj for the test work
+  - `Microsoft.EntityFrameworkCore.Sqlite` left in the test project after the SQLite path was abandoned — caught when listing packages
+  - `[InternalsVisibleTo]` was assumed-added but I never verified — claimed it as "done" without reading disk, caught later when reviewing the csproj contents
+  - Each was caught by reading actual disk state before claiming. Discipline going forward: `git diff HEAD` and `cat <file>` before asserting that something was done
+
+- Namespace collision: creating the `Replyo.Application.Auth.Commands.RefreshToken` folder shadowed `Replyo.Domain.Entities.RefreshToken` everywhere in the Application project. Existing handlers compiled with `Domain.Entities.RefreshToken.Issue(...)` qualifications I'd added without thinking through the cause. Resolved by renaming the folder to `RefreshTokens/` (plural). Lesson: feature folders matching domain entity names need plural-or-different naming
+
+- SQLite in-memory provider couldn't map the `vector(1536)` column on `KnowledgeChunk` — the EF model fails validation at first use even when no test queries that entity. Initially recommended SQLite confidently, then had to pivot to Testcontainers + real Postgres. The Testcontainers decision was deferred from Day 2 ("when we have a concrete repository to test"); the trigger fired with a real use case, which is the right time
+
+- Slug invariant fix landed as two consecutive commits with the same subject because the `.ToLowerInvariant()` removal got missed in the first pass. Caught when reviewing `git log`. End state correct, log readability degraded. Fix: `git diff HEAD` before each commit to verify the diff matches the mental model
+
+- First control test failed with a `duplicate key value violates unique constraint "IX_refresh_tokens_token_hash"` error. Cause: the seed used suffix `-1` for the seeded refresh token plaintext, and `FakeJwtTokenService` started its issue counter at 0 → the handler's first `Issue` call produced suffix `-1`, colliding with the seed. Fixed by starting the fake's counter at 100, leaving low suffixes for seed code. Real win: the failure surfaced because the test went through real Postgres unique constraint enforcement — SQLite or the in-memory provider would have silently accepted the duplicate and the test would have passed for the wrong reason
+
+- Operating instructions claim GitHub commits are "intentionally deferred" — `origin/main` is real and we've been pushing. Update operating instructions on next major edit
 
 
 **Decisions:**
-- Public repo from day one — process visibility (PROGRESS, commit hygiene, PR flow) is the senior signal, not artifact polish. A repo that springs into existence fully-formed reads as suspicious; one that shows three days of careful, conventional commits with a journal reads as authentic
-- Skipped GPG/SSH commit signing for now — would require setup, and "Require signed commits" in the ruleset would block all my commits today. Deferred to a separate ergonomics exercise; not a security gap for a solo portfolio repo
-- Rebase-merge only, no merge commits, no squash — preserves commit-by-commit history on main, keeps PROGRESS-to-git mapping intact. Squash would collapse a PR's careful focused commits into one, destroying the trail
-- Placeholder connection strings in CI rather than spinning up Postgres now — Postgres-in-CI adds 30-60s per run for tests that don't need it. Real Postgres comes when real DB tests need it
-- `paths-ignore` over `paths` — denylist defaults are safer for required-check workflows. Allowlists deadlock on any change that doesn't match the allowlist; denylists only skip what you're sure doesn't matter
-- Application-layer command/handler structure: **plain handler classes injected directly into endpoints**, no dispatcher abstraction. The dispatcher seam earns its keep when there are cross-cutting concerns to centralize (transactional outbox, validation pipeline, decorators) — without those, building a dispatcher abstracts nothing. Three handlers in the auth slice are not a use case for a dispatcher. Open door to add one later if a real cross-cutting concern emerges (this resolves Day 3's open question)
-- Did not touch the auth Application layer today — infrastructure setup was a deliberate detour, not a delay. Recoverable starting point for tomorrow is identical to Day 3's
+
+- **Application-layer command/handler structure**: plain handlers with self-validation via `await _validator.ValidateAndThrowAsync(command, ct)` as the first line. `ICommandHandler<TCommand, TResult>` interface plus a marker interface per handler (`IRegisterTenantHandler : ICommandHandler<RegisterTenantCommand, RegisterTenantResult>`). No mediator, no endpoint filters for validation — handler self-validation works across HTTP, Hangfire, and SignalR entry points uniformly
+
+- **File and folder layout**: file-per-type, folder-per-command. `Auth/Commands/RegisterTenant/{Command,Result,Validator,Handler}.cs`. Cross-cutting abstractions in `Common/Abstractions/`, options classes in `Common/Configuration/`
+
+- **`JwtOptions` lives in Application**, not Infrastructure. Options describe a product behavior (token lifetime, issuer, audience), not an implementation detail. The `SigningKey` field is the one outlier — defensible because splitting the options class is more ceremony than it earns today
+
+- **`IApplicationDbContext` abstraction over repositories.** Repositories over EF Core are an antipattern — `DbSet<T>` already is a repository, `IQueryable<T>` already is a query interface. The interface satisfies the dependency-direction requirement without forcing handlers to give up `Include`, projections, and query composition
+
+- **Marker interface per handler over open-generic registration.** `services.AddScoped<IRegisterTenantHandler, RegisterTenantHandler>()` is greppable and reads as English at call sites. `ICommandHandler<RegisterTenantCommand, RegisterTenantResult>` registration is type-theoretic noise
+
+- **Three-state `PasswordVerificationOutcome`** (`Failed` / `Success` / `SuccessRehashNeeded`) instead of bool. Models PBKDF2 iteration-count aging from day one so the LoginHandler can transparently rehash on outdated parameters
+
+- **`bool` as the result type for genuinely-void commands** (when we eventually hit one). No `Unit` type, no parameterless `ICommandHandler<TCommand>`. Pre-decided so the choice doesn't get relitigated later
+
+- **`Tenant.Create` enforces slug format via regex** (`^[a-z0-9]+(-[a-z0-9]+)*$`). Entity is the guardian of its own invariants; the production call path through `SlugGenerator` already produces conformant slugs, so no behavior change. Protects future callers (seed scripts, admin tooling) from accidentally creating tenants with broken slugs
+
+- **Replay detection: revoke all active tokens for the user**, not the rotation chain. We can't distinguish legitimate replay from malicious, so the safer default is log-out-everywhere. Simpler than walking `ReplacedByTokenHash` chains and more defensive
+
+- **Generic auth error messages** (`"Invalid email or password"`) prevent account enumeration. Active-status check happens after password verification so the "Account is deactivated" message only reaches users who proved they own the account
+
+- **Hand-rolled test fakes over a mocking library.** Tonight's tests work cleanly without one; mocking libraries encourage a particular test style (call counts, argument matchers) that's often a code smell. Decision when we hit a test that genuinely needs one — likely NSubstitute for API ergonomics and clean maintainer history (Moq's 2023 SponsorLink incident makes it a non-starter for a portfolio project)
+
+- **Testcontainers + Postgres for handler unit tests.** Real Postgres + pgvector image. Per-class `IClassFixture` (~5-10s startup, 1-2s for subsequent test classes), per-test data reset. SQLite alternative explored and rejected because of pgvector. Sets the pattern for all future Application-layer DB-touching tests
+
+- **`InternalsVisibleTo` for tests** rather than making handlers public. Preserves the production encapsulation (callers depend on marker interfaces, not concrete classes) while letting tests construct handlers directly
+
+- **Multiple commits over fewer larger commits** — five commits for what could have been one big "auth foundation" commit. Each reads as a coherent unit; future-self reading `git log` gets a clear story instead of one mega-commit
+
+
+**Known issues (deferred, tracked for future commits):**
+
+- TOCTOU race on email/slug uniqueness in `RegisterTenantHandler` — pre-check passes, unique constraint catches on save, surfaces as 500 instead of 409. Fix in commit 4d alongside the `IExceptionHandler` for `ConflictException` because the proper fix lives in API/Infrastructure where Npgsql can be referenced legitimately. Application layer mustn't depend on Npgsql
+
+- SHA-256 hashing of refresh tokens duplicated across three sites: production `RefreshTokenHandler.HashRefreshToken`, test `FakeJwtTokenService.HashRefreshToken`, test `RefreshTokenHandlerTests.HashForTest`. Real `JwtTokenService` (commit 4d) will be the fourth. Extract to a shared helper in `Common/` when 4d lands
+
+- **Tenant query filters not implemented in `ReplyoDbContext`** despite PROJECT_PLAN.md committing to row-level filtering. Currently no tenant-scoped queries exist (auth flow is cross-tenant by design), so the gap isn't actively bleeding. Fix in Week 2 commit 1, before any tenant-scoped query gets written. Auth handlers will need explicit `IgnoreQueryFilters()` calls
+
+- Validator caps `OwnerFullName` and `TenantName` at 200 chars but doesn't cap the derived slug length. A 200-char tenant name produces a 200-char slug. Add `MaximumLength(100)` for slugs in a small follow-up
+
+- `RefreshTokenHandler` and `FakeJwtTokenService` both use a counter to make refresh-token plaintexts deterministic. The fake starts at 100 to avoid collisions with low-suffix seed values (0, 1, 2, ...). Documented in the fake; future test authors using values >= 100 will collide and need to know
+
 
 **Next (Day 5):**
 
-Resume the auth plan at commit 4 of 6 (this is unchanged from Day 3's `Next`, except handler structure is now decided):
+Resume the auth plan at commit 4 of 6, but split into three smaller commits:
 
-- **Application layer** — `IPasswordHasher` abstraction, `JwtOptions` strongly-typed config binding (`Microsoft.Extensions.Options.ConfigurationExtensions` already in deps via ASP.NET Core baseline), `RegisterTenantCommand` (creates Tenant + Owner User atomically), `LoginCommand`, `RefreshTokenCommand`, FluentValidation validators for each. Plain handler classes (`IRegisterTenantHandler` etc.), no dispatcher. No HTTP yet
-- **Infrastructure layer** — `JwtTokenService` using `JsonWebTokenHandler` (the modern API; not `JwtSecurityTokenHandler`), `PasswordHasher<User>` DI registration, refresh token repository operations
-- **Api layer** — JWT bearer middleware, `POST /api/auth/register | login | refresh` endpoints, real `HttpContextCurrentTenant` reading `tenant_id` from `ClaimsPrincipal` (replacing the temporary `NoTenantCurrentTenant`), `RequireOwner` / `RequireMember` authorization policies registered (not yet attached to endpoints)
-- **Tests** — integration tests for register and login happy paths. The placeholder connection string in CI will not be sufficient for these — they hit the database. Two options: spin up Postgres as a service container in the CI workflow, or use `Testcontainers.PostgreSql` for self-contained DB lifecycles per test class. 
+- **Commit 4d-i — Infrastructure layer:**
+  - `JwtTokenService` implementation using `Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler` (the modern API; **not** `JwtSecurityTokenHandler` from the legacy stack)
+  - `PasswordHasher` wrapping `Microsoft.Extensions.Identity.Core`'s `PasswordHasher<User>`, translating its `PasswordVerificationResult` to our three-state `PasswordVerificationOutcome`
+  - SHA-256 refresh-token-hashing helper extracted to `Common/` (the fourth caller triggers extraction per the rule above)
+  - DI registration in `AddInfrastructure`: bind `JwtOptions` from configuration with `ValidateDataAnnotations()` + `ValidateOnStart()`
 
-All future commits go through PRs. No more direct pushes to main — branch protection enforces it.
+- **Commit 4d-ii — Api layer:**
+  - JWT bearer middleware (`AddAuthentication().AddJwtBearer(...)`)
+  - `POST /api/auth/register | login | refresh` minimal-API endpoints (or controllers — decide before writing; minimal-APIs lean cleaner here)
+  - Replace `NoTenantCurrentTenant` with real `HttpContextCurrentTenant` reading `tenant_id` from `ClaimsPrincipal`
+  - `IExceptionHandler`s for `ConflictException` → 409, `UnauthorizedException` → 401, `ValidationException` → 400 with `ValidationProblemDetails`
+  - TOCTOU race fix lands here: catch `DbUpdateException` with Postgres SQLSTATE 23505 in an Infrastructure-side `SaveChangesInterceptor` or inside the exception handler, translate to `ConflictException`
+  - `RequireOwner` / `RequireMember` authorization policies registered (not yet attached to endpoints — Week 2 work)
 
-Open question to revisit before next commit:
-- Application-layer command/handler structure — does Day 4 introduce a mediator pattern (locked stack rejects MediatR specifically), keep handlers as plain services injected directly into endpoints, or use minimal-API endpoint filters? Worth a deliberate decision rather than defaulting to whatever's fastest
+- **Commit 4d-iii — Integration tests:**
+  - `WebApplicationFactory<Program>`-based integration tests for register and login happy paths
+  - Open question: share `PostgresFixture` between `Application.Tests` and `Api.Tests`, or have `Api.Tests` use the dev Docker Compose Postgres? Option 1 is more self-contained, Option 2 is faster. Decide before writing
+
+Open question worth resolving before Day 5 starts:
+- Operating instructions update — they're stale on the GitHub-commits-deferred point and silent on a few decisions made today (clean-architecture handler interface convention, Testcontainers for handler tests, hand-rolled fakes over mocking library, plural folder naming for entity-named features). Worth a small editing pass at the start of Day 5
+
+---
+
+**Next (Day 5):**
+
+This session executed most of what the earlier Day 4 Next block called "commit 4 of 6": all three Application-layer auth commands (Register, Login, Refresh) plus their validators, plus test infrastructure (Testcontainers + replay-detection coverage) that the original plan had at the end. What remains is Infrastructure, Api, and integration tests — split into three smaller commits because the work is bigger than a single commit deserves.
+
+*Workflow constraint:*
+- All future commits go through PRs. Branch protection on `main` enforces this; direct push to main was verified blocked earlier on Day 4. The operating instructions still describe a "deferred GitHub commits" workflow that no longer applies — update on next major edit
+
+*Resolved from the earlier Next block:*
+- Application-layer command/handler structure question (mediator vs. plain services vs. endpoint filters) resolved in favor of plain handler classes with self-validation via injected `IValidator<T>`. `ICommandHandler<TCommand, TResult>` plus a marker interface per handler. No mediator. See Decisions section above for the reasoning
+
+---
+
+**Commit 4d-i — Infrastructure layer:**
+
+- `JwtTokenService` implementing `IJwtTokenService`, using `Microsoft.IdentityModel.JsonWebTokens.JsonWebTokenHandler` (the modern API; **not** `JwtSecurityTokenHandler` from the legacy stack)
+- `PasswordHasher` implementing `IPasswordHasher`, wrapping `Microsoft.Extensions.Identity.Core`'s `PasswordHasher<User>`. Translate Microsoft's `PasswordVerificationResult` (`Failed` / `Success` / `SuccessRehashNeeded`) to our three-state `PasswordVerificationOutcome`. The `User` generic parameter on Microsoft's hasher is required but doesn't actually constrain — the hash is opaque
+- SHA-256 refresh-token-hashing helper extracted to `Common/` (the fourth caller — production handler, fake JWT service, test helper, and now the real JwtTokenService). The "extract on fourth caller" rule from this session's deferred-issues list fires here
+- DI registration in `AddInfrastructure`:
+  - `services.AddOptions<JwtOptions>().BindConfiguration(JwtOptions.SectionName).ValidateDataAnnotations().ValidateOnStart()` so startup fails loud if signing key is missing or too short
+  - `services.AddSingleton<IJwtTokenService, JwtTokenService>()` (singleton — no per-request state)
+  - `services.AddSingleton<IPasswordHasher, PasswordHasher>()` (singleton — same)
+- No production code in this commit; all wiring. Build green and existing handler tests still pass against the real `IJwtTokenService` (replacing `FakeJwtTokenService` in a future test commit, not this one)
+
+---
+
+**Commit 4d-ii — Api layer:**
+
+- JWT bearer middleware: `AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options => ...)` configured from the same `JwtOptions` instance Infrastructure binds. `TokenValidationParameters` set with `ValidateIssuer`, `ValidateAudience`, `ValidateLifetime`, `ValidateIssuerSigningKey` all true
+- Three minimal-API endpoints: `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`. Each binds the corresponding command from the request body (with `[FromBody]`), captures `HttpContext.Connection.RemoteIpAddress` for the `CreatedByIp` field, and dispatches to the handler
+  - Endpoints are `AllowAnonymous` because they're the path *to* authentication, not from it
+  - Decision to make before writing: minimal APIs vs controllers. Lean is minimal APIs — the endpoints are thin glue, no need for the controller machinery. Worth one paragraph in the commit message either way
+- Replace `NoTenantCurrentTenant` with real `HttpContextCurrentTenant`:
+  - Reads `tenant_id` claim from `ClaimsPrincipal` if authenticated, returns null otherwise
+  - Lives in Api layer (not Infrastructure) because it depends on `HttpContext`
+  - DI registration moves from `AddInfrastructure` to `AddApi` (a new extension method, follows the same pattern as the other two)
+- Three `IExceptionHandler` implementations registered in order:
+  - `ValidationExceptionHandler` → 400 with `ValidationProblemDetails` (catches `FluentValidation.ValidationException`)
+  - `ConflictExceptionHandler` → 409 with `ProblemDetails`
+  - `UnauthorizedExceptionHandler` → 401 with `ProblemDetails`
+  - Order matters in registration: more specific first, generic fallback last
+- TOCTOU race fix lands here as part of the exception handling pipeline:
+  - Catch `DbUpdateException` with Postgres SQLSTATE 23505 (unique violation), translate to `ConflictException`
+  - Best place: a `SaveChangesInterceptor` registered on the DbContext in Infrastructure, *or* an exception handler that unwraps the `DbUpdateException`. Decide before writing. Interceptor is more reusable across handlers; exception handler is more local. Lean is interceptor
+- `RequireOwner` and `RequireMember` authorization policies registered in `AddApi` but **not yet attached to endpoints** — that's Week 2 work when there are non-auth endpoints to protect
+
+---
+
+**Commit 4d-iii — Integration tests:**
+
+- `WebApplicationFactory<Program>`-based integration tests in `Replyo.Api.Tests`:
+  - `RegisterEndpointTests.PostRegister_WithValidPayload_Returns201AndTokenPair`
+  - `LoginEndpointTests.PostLogin_WithValidCredentials_Returns200AndTokenPair`
+  - `LoginEndpointTests.PostLogin_WithUnknownEmail_Returns401WithGenericMessage` (account-enumeration defense — verifies the API doesn't leak whether email exists)
+  - `RefreshEndpointTests.PostRefresh_WithValidToken_Returns200AndNewPair`
+  - That's four happy-path-ish tests. Negative cases beyond the enumeration test get added as needed in Week 2
+- Open question worth resolving before writing:
+  - Share `PostgresFixture` between `Application.Tests` and `Api.Tests`, or have `Api.Tests` use the existing dev Docker Compose Postgres directly?
+    - Option 1 (shared fixture): self-contained, each test class manages its own container, ~5-10s startup per test class. Cleaner CI story (no separate service container needed)
+    - Option 2 (dev Postgres): faster (no per-test container startup), but tests now depend on `docker-compose up -d` having been run, and CI needs a Postgres service container in the workflow yaml
+  - Lean is Option 1 (shared `PostgresFixture` extracted to a shared test utility project, or duplicated as `ApiPostgresFixture` in `Api.Tests`). Trade-off: slower test runs, simpler dependencies. Worth one explicit decision when 4d-iii starts
+
+---
+
+*Open questions to resolve before Day 5 starts:*
+
+- **Operating instructions need a small editing pass:**
+  - GitHub-commits-deferred wording is stale (we have a remote and have been pushing all session)
+  - Operating instructions are silent on the workflow change to PR-only
+  - Could capture the architectural decisions made today (clean-architecture handler interface convention, plural folder naming for entity-named features, Testcontainers as the testing pattern, hand-rolled fakes over a mocking library)
+  - Doesn't have to happen at the start of Day 5; can drift to whenever a major edit is happening anyway
+
+- **Decide on minimal APIs vs controllers for the auth endpoints** before writing 4d-ii. Defer to start of 4d-ii rather than pre-deciding now — the decision is small enough that fresh context helps
+
+- **Decide on `SaveChangesInterceptor` vs exception handler** for the unique-violation-to-ConflictException translation in 4d-ii. Same — defer to start of that commit
