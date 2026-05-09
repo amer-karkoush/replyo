@@ -235,6 +235,8 @@ Commit 4c — `Login` and `RefreshToken` commands. LoginHandler returns generic 
 
 - Operating instructions claim GitHub commits are "intentionally deferred" — `origin/main` is real and we've been pushing. Update operating instructions on next major edit
 
+- CI broke after pushing commit 4c because `AddApplication()` registered the three handlers (`IRegisterTenantHandler`, `ILoginHandler`, `IRefreshTokenHandler`), and those handlers depend on `IPasswordHasher` and `IJwtTokenService` — neither of which has a concrete implementation registered yet (Infrastructure is commit 4d). Local tests passed during this session because we'd been running with `dotnet test --filter "FullyQualifiedName~RefreshTokenHandlerTests"`, which only matched the Application tests project — the `Api.Tests` project containing `HealthEndpointTests` was never executed locally. CI runs the full suite unfiltered, surfaced the bug. Verified locally with an unfiltered `dotnet test` after the report — same failure. Fixed by commenting out the three handler registrations in `AddApplication()` with a TODO pointing to commit 4d. The handlers, validators, interfaces, and unit tests remain in place — only the production DI wiring is deferred. Two lessons: (1) handler classes and their DI registration should ship together with their concrete dependencies, half-wired containers break `WebApplicationFactory`-based tests; (2) before pushing, run `dotnet test` without a filter at least once — filtered runs are efficient for iteration but skip entire test projects that would have caught this class of failure pre-push
+
 
 **Decisions:**
 
@@ -268,6 +270,9 @@ Commit 4c — `Login` and `RefreshToken` commands. LoginHandler returns generic 
 
 - **Multiple commits over fewer larger commits** — five commits for what could have been one big "auth foundation" commit. Each reads as a coherent unit; future-self reading `git log` gets a clear story instead of one mega-commit
 
+- **Handler DI registrations ship in the same commit as their concrete dependencies.** Shipping a handler class without its runtime impls is fine (the code compiles, unit tests pass); shipping its `AddScoped<...>` registration without those impls breaks `WebApplicationFactory`-based tests because they run full DI container validation on `app.Build()`. Going forward: handler class can land in one commit, `AddScoped<>` registration lands only when the dependency chain is complete
+
+- **Run `dotnet test` unfiltered at least once before pushing.** Filtered runs (`--filter "FullyQualifiedName~..."`) are efficient for iteration but skip entire test projects that don't match the filter. When verifying "tests are green" pre-push, run unfiltered. Filtered runs are for the inner dev loop; unfiltered is the gate
 
 **Known issues (deferred, tracked for future commits):**
 
@@ -301,6 +306,7 @@ This session executed most of what the earlier Day 4 Next block called "commit 4
   - `services.AddSingleton<IJwtTokenService, JwtTokenService>()` (singleton — no per-request state)
   - `services.AddSingleton<IPasswordHasher, PasswordHasher>()` (singleton — same)
 - No production code in this commit; all wiring. Build green and existing handler tests still pass against the real `IJwtTokenService` (replacing `FakeJwtTokenService` in a future test commit, not this one)
+- **Re-enable the three handler DI registrations** in `AddApplication()` that were temporarily disabled to unblock CI on Day 4. They're currently commented out with a TODO pointing here. Uncomment after `IPasswordHasher` and `IJwtTokenService` are registered in `AddInfrastructure`
 
 ---
 
