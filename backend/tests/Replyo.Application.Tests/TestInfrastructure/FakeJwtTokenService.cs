@@ -1,5 +1,4 @@
-using System.Security.Cryptography;
-using System.Text;
+using Replyo.Application.Common.Security;
 using Replyo.Application.Common.Abstractions;
 using Replyo.Domain.Entities;
 
@@ -11,10 +10,9 @@ namespace Replyo.Application.Tests.TestInfrastructure;
 /// service so the handler's hash-on-lookup logic exercises the real path.
 /// </summary>
 /// <remarks>
-/// Critical correctness point: the SHA-256 hashing here MUST match RefreshTokenHandler's
-/// HashRefreshToken method. If the real JwtTokenService (Infrastructure, commit 4d) uses
-/// a different algorithm, the hash duplication we deferred earlier becomes a real bug.
-/// Tonight's PROGRESS should track this coupling.
+/// Refresh token hashing is delegated to <see cref="RefreshTokenHasher"/> — the same
+/// helper the production handler and real JwtTokenService use. This guarantees that
+/// tokens issued by this fake are findable by the real handler under test.
 /// </remarks>
 internal sealed class FakeJwtTokenService : IJwtTokenService
 {
@@ -28,7 +26,7 @@ internal sealed class FakeJwtTokenService : IJwtTokenService
 
         // Deterministic but distinct per call so rotation tests can tell tokens apart.
         var refreshPlaintext = $"fake-refresh-{user.Id}-{_issueCount}";
-        var refreshHash = HashRefreshToken(refreshPlaintext);
+        var refreshHash = RefreshTokenHasher.Hash(refreshPlaintext);
 
         return new IssuedTokens(
             AccessToken: $"fake-access-{user.Id}-{_issueCount}",
@@ -38,9 +36,5 @@ internal sealed class FakeJwtTokenService : IJwtTokenService
             RefreshTokenExpiresAt: DateTimeOffset.UtcNow.AddDays(30));
     }
 
-    private static string HashRefreshToken(string plaintext)
-    {
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(plaintext));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
+
 }
