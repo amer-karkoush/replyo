@@ -5,6 +5,7 @@ using Replyo.Application.Common.Abstractions;
 using Replyo.Application.Common.Exceptions;
 using Replyo.Application.Tests.TestInfrastructure;
 using Replyo.Domain.Entities;
+using Replyo.Application.Common.Security;
 
 namespace Replyo.Application.Tests.Auth.Commands.RefreshTokens;
 
@@ -111,7 +112,7 @@ private static (RefreshTokenHandler handler, FakeJwtTokenService fakeJwt) BuildH
 
  private static async Task<(User user, RefreshToken token, string plaintext)>
     SeedUserWithRefreshTokenAsync(IApplicationDbContext ctx)
-{
+    {
         var tenant = Tenant.Create("Test Tenant", "test-tenant");
         ctx.Tenants.Add(tenant);
 
@@ -126,7 +127,7 @@ private static (RefreshTokenHandler handler, FakeJwtTokenService fakeJwt) BuildH
         // for this user. We don't go through the service at seed time because we want
         // a stable, predictable plaintext we control.
         var plaintext = $"fake-refresh-{user.Id}-1";
-        var hash = HashForTest(plaintext);
+        var hash = RefreshTokenHasher.Hash(plaintext);
 
         var token = RefreshToken.Issue(
             userId: user.Id,
@@ -139,13 +140,4 @@ private static (RefreshTokenHandler handler, FakeJwtTokenService fakeJwt) BuildH
         return (user, token, plaintext);
     }
 
-    private static string HashForTest(string plaintext)
-    {
-        // Mirrors RefreshTokenHandler.HashRefreshToken and FakeJwtTokenService.HashRefreshToken.
-        // Three call sites for the same algorithm — the duplication is tracked in PROGRESS;
-        // a fourth caller triggers extraction to a shared helper in Common/.
-        var bytes = System.Security.Cryptography.SHA256.HashData(
-            System.Text.Encoding.UTF8.GetBytes(plaintext));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
 }

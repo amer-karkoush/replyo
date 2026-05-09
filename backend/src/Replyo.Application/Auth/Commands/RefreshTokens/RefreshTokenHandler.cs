@@ -1,9 +1,8 @@
-using System.Security.Cryptography;
-using System.Text;
 using FluentValidation;
 using Microsoft.EntityFrameworkCore;
 using Replyo.Application.Common.Abstractions;
 using Replyo.Application.Common.Exceptions;
+using Replyo.Application.Common.Security;
 using Replyo.Domain.Entities;
 
 namespace Replyo.Application.Auth.Commands.RefreshTokens;
@@ -41,7 +40,7 @@ internal sealed class RefreshTokenHandler : IRefreshTokenHandler
 
         // Hash the presented token with the same algorithm the issuer used (SHA-256).
         // We never store or compare plaintext refresh tokens.
-        var presentedHash = HashRefreshToken(command.RefreshToken);
+        var presentedHash = RefreshTokenHasher.Hash(command.RefreshToken);
 
         // Include the user so we can re-issue without a second roundtrip.
         var stored = await _db.RefreshTokens
@@ -108,11 +107,4 @@ internal sealed class RefreshTokenHandler : IRefreshTokenHandler
             token.Revoke(revokedByIp);
     }
 
-    private static string HashRefreshToken(string plaintext)
-    {
-        // SHA-256 hex string. Must match the algorithm used by JwtTokenService.Issue
-        // when the token was originally produced — keep these two in sync.
-        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(plaintext));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
 }
